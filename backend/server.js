@@ -27,6 +27,11 @@ io.on('connection', (socket) => {
     io.emit('chat message', msg);
   });
 
+  // 사용자 입장 이벤트 처리
+  socket.on('join', (name) => {
+    socket.broadcast.emit('system message', `${name}님이 입장했습니다`);
+  });
+
   // 연결 해제 시 이벤트 처리
   socket.on('disconnect', (reason) => {
     console.log('연결 해제', socket.id, reason);
