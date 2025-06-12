@@ -103,6 +103,7 @@ onMounted(() => {
   socket.on('user list', (list) => {
     users.value = list;
   });
+  socket.emit('request user list');
 });
 </script>
 

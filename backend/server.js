@@ -8,7 +8,8 @@ const app = express(); // Express 인스턴스 생성
 app.use(cors()); // 모든 도메인 요청 허용
 
 const httpServer = createServer(app); // Express 앱을 HTTP 서버로 변환
-const userMap = new Map(); // 소켓 연결 시 사용자 이름을 저장할 Map 구조 생성
+// ✅ 이름 → Set(socket.id)
+const userSockets = new Map(); // 소켓 연결 시 사용자 이름을 저장할 Map 구조 생성
 
 // Socket.IO 서버 초기화
 const io = new Server(httpServer, {
@@ -30,17 +31,54 @@ io.on('connection', (socket) => {
 
   // 사용자 입장 이벤트 처리
   socket.on('join', (name) => {
-    userMap.set(socket.id, name); // 입장과 동시에 userMap에 사용자 소켓 아이디와 이름 저장
+    if (!userSockets.has(name)) {
+      userSockets.set(name, new Set());
+    }
+    userSockets.get(name).add(socket.id);
+
+    socket.data.name = name; // disconnect 시 사용할 이름 보관
+
     socket.broadcast.emit('system message', `${name}님이 입장했습니다`);
     broadcastUserList();
   });
 
   // 연결 해제 시 이벤트 처리
   socket.on('disconnect', (reason) => {
-    const name = userMap.get(socket.id);
+    const name = socket.data.name;
     console.log(`🔌 연결 종료됨: ${socket.id}, 이름: ${name}, 사유: ${reason}`);
-    if (name) {
-      /*
+
+    if (name && userSockets.has(name)) {
+      const socketSet = userSockets.get(name);
+      socketSet.delete(socket.id);
+
+      if (socketSet.size === 0) {
+        userSockets.delete(name);
+        io.emit('system message', `${name}님이 퇴장했습니다`);
+      }
+
+      broadcastUserList();
+    }
+  });
+  socket.on('request user list', () => {
+    const userList = Array.from(userSockets.keys());
+    socket.emit('user list', userList);
+  });
+});
+
+// 사용자 목록 전체 전송
+function broadcastUserList() {
+  // 중복 제거하여 유저 리스트 구성
+  const userList = Array.from(userSockets.keys());
+  io.emit('user list', userList);
+}
+
+// 서버 시작
+const PORT = process.env.PORT || 3000; // 포트 설정
+httpServer.listen(PORT, () => {
+  console.log(`서버가 http://localhost:${PORT}에서 실행 중입니다`); // 서버 시작 메시지
+});
+
+/*
         🔍 왜 socket.broadcast.emit()은 퇴장 메시지에 실패할까?
 
         socket.broadcast.emit()은 해당 소켓(연결된 클라이언트)을 제외한
@@ -56,20 +94,3 @@ io.on('connection', (socket) => {
         따라서 disconnect 직전에도 안정적으로 브로드캐스트할 수 있어,
         퇴장 알림 메시지에는 io.emit()이 더 안전한 선택이라고 생각한다.
       */
-      io.emit('system message', `${name}님이 퇴장했습니다`);
-      userMap.delete(socket.id);
-      broadcastUserList();
-    }
-  });
-});
-
-function broadcastUserList() {
-  const userList = Array.from(userMap.values());
-  io.emit('user list', userList);
-}
-
-// 서버 시작
-const PORT = process.env.PORT || 3000; // 포트 설정
-httpServer.listen(PORT, () => {
-  console.log(`서버가 http://localhost:${PORT}에서 실행 중입니다`); // 서버 시작 메시지
-});
