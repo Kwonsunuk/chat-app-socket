@@ -33,6 +33,13 @@
       </form>
     </div>
   </div>
+  <!-- 사용자 목록 출력 -->
+  <div class="user-list">
+    <h3>🧑 접속 중인 사용자</h3>
+    <ul>
+      <li v-for="(user, i) in users" :key="i">{{ user }}</li>
+    </ul>
+  </div>
 </template>
 
 <script setup>
@@ -54,6 +61,9 @@ const newMessage = ref('');
 const userName = ref('');
 const tempName = ref('');
 
+// 유저 목록을 저장할 반응형 배열
+const users = ref([]);
+
 // ✅ 사용자가 이름을 입력하고 "입장" 버튼을 누를 때 호출되는 함수
 function confirmName() {
   // 입력된 이름이 공백이 아닌 경우만 저장
@@ -63,19 +73,6 @@ function confirmName() {
     socket.emit('join', userName.value);
   }
 }
-
-// 🔁 컴포넌트 마운트 시 소켓 이벤트 수신 설정
-onMounted(() => {
-  // 서버에서 보낸 'chat message' 이벤트 수신 시 실행
-  socket.on('chat message', (msg) => {
-    // 수신된 메시지를 messages 배열에 추가 → 화면에 자동 반영
-    messages.value.push(msg);
-  });
-  // 서버에서 보낸 'system message' 이벤트 수신 시 실행
-  socket.on('system message', (msg) => {
-    messages.value.push({ user: '시스템', text: msg });
-  });
-});
 
 // 📤 메시지 전송 함수: 전송 버튼 클릭 또는 엔터 시 실행
 function sendMessage() {
@@ -91,6 +88,22 @@ function sendMessage() {
   // 입력창 초기화
   newMessage.value = '';
 }
+
+// 🔁 컴포넌트 마운트 시 소켓 이벤트 수신 설정
+onMounted(() => {
+  // 서버에서 보낸 'chat message' 이벤트 수신 시 실행
+  socket.on('chat message', (msg) => {
+    // 수신된 메시지를 messages 배열에 추가 → 화면에 자동 반영
+    messages.value.push(msg);
+  });
+  // 서버에서 보낸 'system message' 이벤트 수신 시 실행
+  socket.on('system message', (msg) => {
+    messages.value.push({ user: '시스템', text: msg });
+  });
+  socket.on('user list', (list) => {
+    users.value = list;
+  });
+});
 </script>
 
 <style scoped>
