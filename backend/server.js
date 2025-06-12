@@ -21,25 +21,28 @@ const io = new Server(httpServer, {
 
 // 클라이언트 연결 시 이벤트 핸들러 등록
 io.on('connection', (socket) => {
-  console.log('새로운 연결', socket.id);
+  const name = socket.handshake.query.name;
+
+  if (!name || userSockets.has(name)) {
+    socket.emit('join error', '이미 사용중인 이름입니다.');
+    socket.disconnect();
+    return;
+  }
+
+  if (!userSockets.has(name)) {
+    userSockets.set(name, new Set());
+  }
+  userSockets.get(name).add(socket.id);
+
+  socket.data.name = name;
+  console.log('새로운 연결', socket.id, '이름:', name);
+  socket.broadcast.emit('system message', `${name}님이 입장했습니다`);
+  broadcastUserList();
 
   socket.on('chat message', (msg) => {
     console.log('메시지 수신:', msg);
     // 프론트에서 받은 메시지를 모든 클라이언트에게 수신
     io.emit('chat message', msg);
-  });
-
-  // 사용자 입장 이벤트 처리
-  socket.on('join', (name) => {
-    if (!userSockets.has(name)) {
-      userSockets.set(name, new Set());
-    }
-    userSockets.get(name).add(socket.id);
-
-    socket.data.name = name; // disconnect 시 사용할 이름 보관
-
-    socket.broadcast.emit('system message', `${name}님이 입장했습니다`);
-    broadcastUserList();
   });
 
   // 연결 해제 시 이벤트 처리
