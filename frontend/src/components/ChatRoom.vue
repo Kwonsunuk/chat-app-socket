@@ -37,7 +37,9 @@
   <div class="user-list">
     <h3>🧑 접속 중인 사용자</h3>
     <ul>
-      <li v-for="(user, i) in users" :key="i">{{ user }}</li>
+      <li v-for="(user, i) in users" :key="i">
+        {{ user }}<span v-if="user === userName">(본인)</span>
+      </li>
     </ul>
   </div>
 </template>
