@@ -1,99 +1,99 @@
+// backend/server.js
 import cors from 'cors';
 import express from 'express';
-import { createServer } from 'http';
+import http from 'http';
 import { Server } from 'socket.io';
 
-// 앱 및 서버 초기화
-const app = express(); // Express 인스턴스 생성
-app.use(cors()); // 모든 도메인 요청 허용
+const app = express();
+app.use(cors());
+app.use(express.json());
 
-const httpServer = createServer(app); // Express 앱을 HTTP 서버로 변환
-// ✅ 이름 → Set(socket.id)
-const userSockets = new Map(); // 소켓 연결 시 사용자 이름을 저장할 Map 구조 생성
-
-// Socket.IO 서버 초기화
-const io = new Server(httpServer, {
-  cors: {
-    origin: '*', // 모든 도메인에서의 요청 허용
-    methods: ['GET', 'POST'], // 허용할 HTTP 메소드
-  },
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] },
 });
 
-// 클라이언트 연결 시 이벤트 핸들러 등록
+const activeNames = new Set();
+const rooms = new Set();
+const roomUsers = new Map();
+const roomHistory = new Map();
+const MAX_HISTORY = 100;
+
+// 1) 이름 중복 확인용 REST API
+app.get('/check-name', (req, res) => {
+  const name = req.query.name;
+  if (!name) {
+    return res.status(400).json({ available: false, message: '이름을 보내주세요' });
+  }
+  res.json({ available: !activeNames.has(name) });
+});
+
 io.on('connection', (socket) => {
-  const name = socket.handshake.query.name;
+  const { name } = socket.handshake.query;
 
-  if (!name || userSockets.has(name)) {
-    socket.emit('join error', '이미 사용중인 이름입니다.');
-    socket.disconnect();
-    return;
-  }
-
-  if (!userSockets.has(name)) {
-    userSockets.set(name, new Set());
-  }
-  userSockets.get(name).add(socket.id);
-
-  socket.data.name = name;
-  console.log('새로운 연결', socket.id, '이름:', name);
-  socket.broadcast.emit('system message', `${name}님이 입장했습니다`);
-  broadcastUserList();
-
-  socket.on('chat message', (msg) => {
-    console.log('메시지 수신:', msg);
-    // 프론트에서 받은 메시지를 모든 클라이언트에게 수신
-    io.emit('chat message', msg);
+  activeNames.add(name);
+  // 방 목록 요청
+  socket.on('request room list', () => {
+    socket.emit('room list', Array.from(rooms));
   });
 
-  // 연결 해제 시 이벤트 처리
-  socket.on('disconnect', (reason) => {
-    const name = socket.data.name;
-    console.log(`🔌 연결 종료됨: ${socket.id}, 이름: ${name}, 사유: ${reason}`);
+  // 방 입장
+  socket.on('join room', ({ room, user }) => {
+    const roomName = room.trim();
+    if (!roomName) {
+      socket.emit('join error', '유효하지 않은 방 이름입니다.');
+      return;
+    }
+    // 신규 방 생성 시
+    if (!rooms.has(roomName)) {
+      rooms.add(roomName);
+      io.emit('room list', Array.from(rooms));
+    }
+    socket.join(roomName);
+    // 사용자 목록 관리
+    if (!roomUsers.has(roomName)) roomUsers.set(roomName, new Set());
+    roomUsers.get(roomName).add(user);
+    io.in(roomName).emit('user list', Array.from(roomUsers.get(roomName)));
+    // 이력 전송
+    const history = roomHistory.get(roomName) || [];
+    socket.emit('room history', history);
+  });
 
-    if (name && userSockets.has(name)) {
-      const socketSet = userSockets.get(name);
-      socketSet.delete(socket.id);
+  // 메시지 송신
+  socket.on('chat message', ({ room, user, text }) => {
+    const msg = { user, text, time: Date.now() };
+    if (!roomHistory.has(room)) roomHistory.set(room, []);
+    const hist = roomHistory.get(room);
+    hist.push(msg);
+    if (hist.length > MAX_HISTORY) hist.shift();
+    io.in(room).emit('chat message', msg);
+  });
 
-      if (socketSet.size === 0) {
-        userSockets.delete(name);
-        io.emit('system message', `${name}님이 퇴장했습니다`);
-      }
-
-      broadcastUserList();
+  // 방 퇴장
+  socket.on('leave room', (room) => {
+    socket.leave(room);
+    if (roomUsers.has(room)) {
+      roomUsers.get(room).delete(socket.handshake.query.name);
+      io.in(room).emit('user list', Array.from(roomUsers.get(room)));
     }
   });
-  socket.on('request user list', () => {
-    const userList = Array.from(userSockets.keys());
-    socket.emit('user list', userList);
+
+  // 이력 재요청
+  socket.on('request room history', (room) => {
+    const history = roomHistory.get(room) || [];
+    socket.emit('room history', history);
+  });
+
+  // 연결 해제 시 사용자 목록 정리
+  socket.on('disconnect', () => {
+    activeNames.delete(name);
+    rooms.forEach((r) => {
+      if (roomUsers.has(r) && roomUsers.get(r).delete(socket.handshake.query.name)) {
+        io.in(r).emit('user list', Array.from(roomUsers.get(r)));
+      }
+    });
   });
 });
 
-// 사용자 목록 전체 전송
-function broadcastUserList() {
-  // 중복 제거하여 유저 리스트 구성
-  const userList = Array.from(userSockets.keys());
-  io.emit('user list', userList);
-}
-
-// 서버 시작
-const PORT = process.env.PORT || 3000; // 포트 설정
-httpServer.listen(PORT, () => {
-  console.log(`서버가 http://localhost:${PORT}에서 실행 중입니다`); // 서버 시작 메시지
-});
-
-/*
-        🔍 왜 socket.broadcast.emit()은 퇴장 메시지에 실패할까?
-
-        socket.broadcast.emit()은 해당 소켓(연결된 클라이언트)을 제외한
-        다른 모든 클라이언트에게 메시지를 보낸다.
-        그러나 disconnect 이벤트 시점에는 socket 객체가 곧 연결 종료되기 때문에
-        내부 상태가 완전히 유지되지 않을 수 있다.
-
-        즉, 연결이 끊어지는 순간에는 해당 소켓의 broadcast 기능이 안정적으로 동작하지 않을 수 있다.
-        이 때문에 퇴장 메시지가 다른 클라이언트에게 전달되지 않는 경우가 발생한다.
-
-        반면 io.emit()은 특정 소켓에 의존하지 않고,
-        서버 전체에 연결된 모든 클라이언트에게 메시지를 보내는 방식이다.
-        따라서 disconnect 직전에도 안정적으로 브로드캐스트할 수 있어,
-        퇴장 알림 메시지에는 io.emit()이 더 안전한 선택이라고 생각한다.
-      */
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Socket.IO 서버 실행 중 ➤ 포트 ${PORT}`));
