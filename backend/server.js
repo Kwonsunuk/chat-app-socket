@@ -31,6 +31,15 @@ app.get('/check-name', (req, res) => {
 io.on('connection', (socket) => {
   const { name } = socket.handshake.query;
 
+  // --- 타이핑 이벤트 처리 추가 ---
+  socket.on('typing', ({ room, user }) => {
+    socket.to(room).emit('typing', user);
+  });
+  socket.on('stop typing', ({ room, user }) => {
+    socket.to(room).emit('stop typing', user);
+  });
+  // -----------------------------------
+
   activeNames.add(name);
   // 방 목록 요청
   socket.on('request room list', () => {
